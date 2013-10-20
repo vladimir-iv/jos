@@ -10,6 +10,7 @@
 #include <kern/console.h>
 #include <kern/monitor.h>
 #include <kern/kdebug.h>
+#include <kern/pmap.h>
 
 #define CMDBUF_SIZE	80	// enough for one VGA text line
 
@@ -25,6 +26,7 @@ static struct Command commands[] = {
 	{ "help", "Display this list of commands", mon_help },
 	{ "kerninfo", "Display information about the kernel", mon_kerninfo },
 	{ "backtrace", "Backtrace all fun. callings", mon_backtrace },
+	{ "showmap", "Show pages mapped between args", mon_showmap },
 };
 #define NCOMMANDS (sizeof(commands)/sizeof(commands[0]))
 
@@ -68,7 +70,6 @@ mon_backtrace(int argc, char **argv, struct Trapframe *tf)
 	
 	do
 	{
-		
 		uint32_t eip_x = *((uint32_t*)(ebp_x + 4));
 		uint32_t arg_1 = *((uint32_t*)(ebp_x + 8));
 		uint32_t arg_2 = *((uint32_t*)(ebp_x + 12));
@@ -77,8 +78,6 @@ mon_backtrace(int argc, char **argv, struct Trapframe *tf)
 		uint32_t arg_5 = *((uint32_t*)(ebp_x + 24));
 		
 		debuginfo_eip((uintptr_t)eip_x, &info);
-		
-		
 		
 		cprintf("  ebp %08x  eip %08x  ", ebp_x, eip_x);
 	    cprintf("args %08x %08x %08x %08x %08x\n", arg_1, arg_2, arg_3, arg_4, arg_5);
@@ -95,6 +94,67 @@ mon_backtrace(int argc, char **argv, struct Trapframe *tf)
 		ebp_x = *((uint32_t*)ebp_x);
 	} 
 	while((ebp_x <= 0xf0110000) && (ebp_x != 0x0));
+	
+	return 0;
+}
+
+static int
+show_flags(pde_t* entry)
+{
+	if( *entry | PTE_P )
+		cprintf("P ");
+	if( *entry | PTE_W )
+		cprintf("W ");
+	if( *entry | PTE_U )
+		cprintf("U ");
+	if( *entry | PTE_PWT )
+		cprintf("PWT ");
+	if( *entry | PTE_A )
+		cprintf("A ");
+	if( *entry | PTE_G )
+		cprintf("G ");
+		
+	cprintf("\n");
+	
+	return 0;
+}
+
+int
+mon_showmap(int argc, char** argv, struct Trapframe *tf)
+{
+
+	uintptr_t va;
+	pde_t* pgdir = KADDR(rcr3());
+	pde_t *pgdir_entry, *ptbl_entry, *page_entry;
+	
+	if( argc != 2 ) {
+		cprintf("incorrect number of arguments\n");
+		return 0;
+	}
+	
+	va = strtol(argv[1], NULL, 16);
+	
+    pgdir_entry = pgdir + PDX(va);
+	
+	if( !( *pgdir_entry | PTE_P) ) {
+		cprintf("Not mapped!\n");
+		return 0;
+	}
+	cprintf("Dir.entry flags: ");
+	show_flags(pgdir_entry);
+	
+	ptbl_entry = (pde_t*)KADDR(PTE_ADDR(*pgdir_entry)) + PTX(va) ; 
+	
+	if( !( *ptbl_entry | PTE_P) ) {
+		cprintf("Not mapped!\n");
+		return 0;
+	}
+	cprintf("Tbl.entry flags: ");
+	show_flags(ptbl_entry);
+	
+	page_entry = (pde_t*)PTE_ADDR(*ptbl_entry) + PGOFF(va);
+	
+	cprintf("%p\n", page_entry);
 	
 	return 0;
 }
